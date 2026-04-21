@@ -67,9 +67,8 @@ export async function updateDriverData(
       if (data.idCard.idImage) updateData['documents.idFront'] = data.idCard.idImage;
     }
 
-    if (data.vehicleCategory) {
-      updateData['vehicle.vehicleCategory'] = data.vehicleCategory;
-    }
+    // NOTE: vehicleCategory is now calculated by backend, not saved from app
+    // We only save vehicle.type from the app
 
     if (data.vehicle) {
       if (data.vehicle.type) updateData['vehicle.type'] = data.vehicle.type;

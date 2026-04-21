@@ -29,7 +29,7 @@ export interface RegistrationData {
   };
 
   vehicle: {
-    type: string;
+    type: string; // truck / car / bicycle / motorbike / minibus - set in step 5
     brand: string;
     model: string;
     productionYear: string;
@@ -40,7 +40,7 @@ export interface RegistrationData {
     category?: string;
   };
 
-  vehicleCategory?: string;
+  // NOTE: vehicleCategory is NOT stored here - it's calculated by backend
 
   operation: {
     place: string;

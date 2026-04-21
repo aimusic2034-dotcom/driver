@@ -175,28 +175,19 @@ export default function Dashboard() {
       setIsLoading(false);
     });
 
-    // Listen to drivers_online/{uid} for online status
+    // Listen to drivers_online/{uid} for online status and current ride info
+    // NOTE: We now use drivers_online instead of drivers for ride tracking
     const driversOnlineRef = ref(database, `drivers_online/${uid}`);
-    const onlineListener = onValue(driversOnlineRef, (snapshot) => {
+    let currentRideUnsubscribe: (() => void) | null = null;
+
+    const driversOnlineListener = onValue(driversOnlineRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
         setIsOnline(data.isOnline === true);
         setIsBusy(data.isBusy === true);
         sliderX.setValue(data.isOnline ? SLIDE_RANGE : 0);
-      } else {
-        setIsOnline(false);
-        setIsBusy(false);
-        sliderX.setValue(0);
-      }
-    });
 
-    // Listen to Realtime DB drivers/{uid} for current ride info
-    const driverRealtimeRef = ref(database, `drivers/${uid}`);
-    let currentRideUnsubscribe: (() => void) | null = null;
-
-    const driverListener = onValue(driverRealtimeRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
+        // Handle currentRide tracking
         if (data.currentRide) {
           if (currentRideUnsubscribe) {
             currentRideUnsubscribe();
@@ -220,13 +211,16 @@ export default function Dashboard() {
           setActiveRide(null);
           setRideStatus(null);
         }
+      } else {
+        setIsOnline(false);
+        setIsBusy(false);
+        sliderX.setValue(0);
       }
     });
 
     return () => {
       unsubscribeFirestore();
-      off(driversOnlineRef, 'value', onlineListener);
-      off(driverRealtimeRef, 'value', driverListener);
+      off(driversOnlineRef, 'value', driversOnlineListener);
       if (currentRideUnsubscribe) {
         currentRideUnsubscribe();
       }
@@ -344,43 +338,12 @@ export default function Dashboard() {
     const uid = auth.currentUser?.uid;
     if (!uid || !driverData) return;
 
-    const firstName = driverData.profile?.firstName || '';
-    const lastName = driverData.profile?.lastName || '';
-    const driverName = `${firstName} ${lastName}`.trim();
-
-    const carBrand = driverData.vehicle?.brand || '';
-    const carModelName = driverData.vehicle?.model || '';
-    const carColor = driverData.vehicle?.color || '';
-    const carModel = carColor && carBrand
-      ? `${carColor} • ${carBrand} ${carModelName}`.trim()
-      : `${carBrand} ${carModelName}`.trim();
-
-    const plateNumber = driverData.vehicle?.plateNumber || '';
-    const photo = driverData.profile?.profilePicture || '';
-    const rating = driverData.rating || 5.0;
-
     const coords = await getLocation();
     if (coords) {
       const { latitude, longitude, heading } = coords;
 
-      // Update drivers/{uid} with full info
-      await update(ref(database, `drivers/${uid}`), {
-        name: driverName,
-        plateNumber,
-        carModel,
-        rating,
-        photo,
-        status: 'online',
-        busy: false,
-        lastActive: Date.now(),
-        location: {
-          latitude,
-          longitude,
-          heading: heading || 0,
-        },
-      });
-
       // Update driver_locations/{uid} with flat structure
+      // NOTE: We no longer write to drivers/{uid} - driver data is in Firestore
       await set(ref(database, `driver_locations/${uid}`), {
         lat: latitude,
         lng: longitude,
@@ -392,7 +355,7 @@ export default function Dashboard() {
       console.log('[v0] Driver went online, initial location set:', { lat: latitude, lng: longitude });
     }
 
-    // SET drivers_online/{uid} - NEW REALTIME STATE SYSTEM
+    // SET drivers_online/{uid} - REALTIME STATE SYSTEM
     await set(ref(database, `drivers_online/${uid}`), {
       isOnline: true,
       isBusy: false,
@@ -417,11 +380,7 @@ export default function Dashboard() {
     setIsOnline(false);
     await stopTracking();
 
-    // Update drivers/{uid} status
-    await update(ref(database, `drivers/${uid}`), {
-      status: 'offline',
-    });
-
+    // NOTE: We no longer write to drivers/{uid} - driver data is in Firestore
     // REMOVE drivers_online/{uid} - Driver goes offline
     await remove(ref(database, `drivers_online/${uid}`));
 
@@ -518,18 +477,13 @@ export default function Dashboard() {
         },
       });
 
-      // Remove from incoming queue
-      await remove(ref(database, `drivers/${uid}/incoming/${pendingRide.id}`));
+      // NOTE: We no longer write to drivers/{uid} - driver data is in Firestore
+      // The incoming queue and currentRide tracking is now handled via drivers_online
 
-      // Update driver status to busy
-      await update(ref(database, `drivers/${uid}`), {
-        busy: true,
-        currentRide: pendingRide.id,
-      });
-
-      // Update drivers_online/{uid} isBusy = true
+      // Update drivers_online/{uid} isBusy = true and track current ride
       await update(ref(database, `drivers_online/${uid}`), {
         isBusy: true,
+        currentRide: pendingRide.id,
         lastUpdated: Date.now(),
       });
 
@@ -603,15 +557,12 @@ export default function Dashboard() {
       console.log('📝 Cleaning up messages...');
       await remove(ref(database, `rides/${activeRide.id}/messages`));
 
+      // NOTE: We no longer write to drivers/{uid} - driver data is in Firestore
+      // Update drivers_online/{uid} isBusy = false and clear currentRide
       console.log('[v0] Updating driver status to available...');
-      await update(ref(database, `drivers/${uid}`), {
-        busy: false,
-        currentRide: null,
-      });
-
-      // Update drivers_online/{uid} isBusy = false
       await update(ref(database, `drivers_online/${uid}`), {
         isBusy: false,
+        currentRide: null,
         lastUpdated: Date.now(),
       });
 

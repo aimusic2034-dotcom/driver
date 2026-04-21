@@ -98,20 +98,26 @@ export default function RidesDelivery() {
     }
 
     try {
-      // Update driver document with role and vehicle category
+      // Update driver document with role and vehicle.type (NOT vehicleCategory)
+      // vehicleCategory is now calculated by the backend
       await updateDriverData(
         uid,
         {
           role: selectedOption.role as any,
-          vehicleCategory: selectedOption.category,
+          vehicle: {
+            type: selectedOption.category, // Save as vehicle.type (truck/car/bicycle/motorbike/minibus)
+          },
         },
         5
       );
 
-      // Update context
+      // Update context - store in vehicle.type for local reference
       updateRegistrationData({
         role: selectedOption.role as any,
-        vehicleCategory: selectedOption.category,
+        vehicle: {
+          ...registrationData.vehicle,
+          type: selectedOption.category,
+        },
       });
 
       setCurrentStep(6);

@@ -194,7 +194,7 @@ export default function VehicleInformation() {
   // Store raw vehicle documents for looking up doc IDs later
   const [vehicleDocMap, setVehicleDocMap] = useState<Map<string, string>>(new Map());
 
-  // Load brands from Firestore vehicles_master collection based on vehicleCategory
+  // Load brands from Firestore vehicles_master collection based on vehicle.type
   useEffect(() => {
     const loadBrandsFromFirestore = async () => {
       setIsLoadingBrands(true);
@@ -202,32 +202,34 @@ export default function VehicleInformation() {
       try {
         const uid = auth.currentUser?.uid || registrationData.uid;
 
-        // Step 1: Get vehicleCategory - first try context, then fetch from Firestore
-        let vehicleCategory = registrationData.vehicleCategory;
+        // Step 1: Get vehicle type - first try context, then fetch from Firestore
+        // vehicle.type is set in step 5 (ridesDelivery.tsx) as truck/car/bicycle/motorbike/minibus
+        let vehicleType = registrationData.vehicle?.type;
 
-        if (!vehicleCategory && uid) {
-          console.log('[v0] No category in context, fetching from Firestore...');
+        if (!vehicleType && uid) {
+          console.log('[v0] No type in context, fetching from Firestore...');
           const driverRef = doc(firestore, 'drivers', uid);
           const driverSnap = await getDoc(driverRef);
 
           if (driverSnap.exists()) {
-            vehicleCategory = driverSnap.data()?.vehicle?.vehicleCategory;
-            console.log('[v0] Loaded vehicleCategory from Firestore:', vehicleCategory);
+            vehicleType = driverSnap.data()?.vehicle?.type;
+            console.log('[v0] Loaded vehicle.type from Firestore:', vehicleType);
           }
         }
 
-        if (!vehicleCategory) {
-          console.log('[v0] No vehicle category found');
+        if (!vehicleType) {
+          console.log('[v0] No vehicle type found');
           setIsLoadingBrands(false);
           return;
         }
 
-        console.log('[v0] Loading brands for category:', vehicleCategory);
+        console.log('[v0] Loading brands for type:', vehicleType);
 
-        // Step 2: Query vehicles_master collection FIRST - filtered by vehicleCategory
-        // This is the FIRST query - NOT pricing, NOT services, NOT vehicle_service_rules
+        // Step 2: Query vehicles_master collection FIRST - filtered by vehicleCategory field
+        // Note: vehicles_master still uses vehicleCategory field to categorize vehicles
+        // We use vehicle.type from context which maps to vehicleCategory in the master collection
         const vehiclesMasterRef = collection(firestore, 'vehicles_master');
-        const q = query(vehiclesMasterRef, where('vehicleCategory', '==', vehicleCategory));
+        const q = query(vehiclesMasterRef, where('vehicleCategory', '==', vehicleType));
         const querySnapshot = await getDocs(q);
 
         console.log('[v0] vehicles_master query returned', querySnapshot.size, 'documents');
@@ -292,7 +294,7 @@ export default function VehicleInformation() {
     };
 
     loadBrandsFromFirestore();
-  }, [registrationData.vehicleCategory, registrationData.uid]);
+  }, [registrationData.vehicle?.type, registrationData.uid]);
 
   // Filter brands based on search
   useEffect(() => {
@@ -362,7 +364,7 @@ export default function VehicleInformation() {
           console.log('[v0] Available services:', services);
 
           // FIXED: For trucks, always use 'open' and 'enclosed' for cargo types
-          const category = registrationData.vehicleCategory;
+          const category = registrationData.vehicle?.type;
           if (category === 'truck') {
             setAvailableCargoTypes(['open', 'enclosed']);
             console.log('[v0] Set cargo types to open/enclosed for truck');
@@ -395,7 +397,7 @@ export default function VehicleInformation() {
   }, [selectedBrand, vehicleData.model, vehicleDocMap]);
 
   const setDefaultServiceOptions = () => {
-    const category = registrationData.vehicleCategory;
+    const category = registrationData.vehicle?.type;
     if (category === 'car' || category === 'motorbike') {
       setAvailableServices(['ride', 'delivery', 'courier', 'towing']);
       setAvailableCargoTypes([]);
@@ -473,12 +475,12 @@ export default function VehicleInformation() {
 
   // Check if cargo types should be shown - only for trucks
   const shouldShowCargoTypes = (): boolean => {
-    return registrationData.vehicleCategory === 'truck';
+    return registrationData.vehicle?.type === 'truck';
   };
 
   // Check if tonnage should be shown - only for trucks
   const shouldShowTonnage = (): boolean => {
-    return registrationData.vehicleCategory === 'truck';
+    return registrationData.vehicle?.type === 'truck';
   };
 
   // Single select for cargo type - reset refrigerationType when changing
@@ -503,7 +505,7 @@ export default function VehicleInformation() {
 
   // Check if refrigeration field should be shown (only when cargoType is 'enclosed')
   const shouldShowRefrigeration = (): boolean => {
-    return registrationData.vehicleCategory === 'truck' && vehicleData.cargoType === 'enclosed';
+    return registrationData.vehicle?.type === 'truck' && vehicleData.cargoType === 'enclosed';
   };
 
   const validatePlate = (text: string) => {
@@ -541,7 +543,7 @@ export default function VehicleInformation() {
   };
 
   const isFormValid = () => {
-    const category = registrationData.vehicleCategory;
+    const category = registrationData.vehicle?.type;
     
     // Common required fields for ALL categories:
     // - vehicle image, vehicle license, certificate of registration (now required)
@@ -595,7 +597,8 @@ export default function VehicleInformation() {
       return;
     }
 
-    const classification = classifyVehicle(registrationData.vehicleCategory);
+    // Get vehicle type from context (set in ridesDelivery.tsx step 5)
+    const vehicleType = registrationData.vehicle?.type || '';
 
     try {
       setIsUploading(true);
@@ -648,57 +651,67 @@ export default function VehicleInformation() {
         vehicleRegistrationUrl = await uploadImageToCloudinary(base64, 'driver_images');
       }
 
-      // Update Firestore with vehicle data and Cloudinary URLs
-      const driverRef = doc(firestore, 'drivers', uid);
-      const vehicleUpdateData: any = {
-        'vehicle.brand': vehicleData.brand,
-        'vehicle.model': vehicleData.model,
-        'vehicle.color': vehicleData.color,
-        'vehicle.productionYear': vehicleData.productionYear,
-        'vehicle.plateNumber': vehicleData.numberPlate.trim(),
-        'vehicle.type': classification,
-        'vehicle.vehicleCategory': registrationData.vehicleCategory || '',
-        'vehicle.carImage': vehiclePictureUrl,
-        'vehicle.vehicleLicense': vehicleLicenseUrl,
-        'vehicle.registrationCertificate': vehicleRegistrationUrl,
-        registrationStep: 6,
-        updatedAt: serverTimestamp(),
+      // Prepare services array
+      let services = vehicleData.services || [];
+      if (vehicleType === 'minibus') {
+        services = ['ride']; // Auto-set for minibus
+      }
+
+      // Build payload for backend API
+      const payload: any = {
+        uid,
+        type: vehicleType, // truck / car / minibus / bicycle / motorbike
+        brand: vehicleData.brand,
+        model: vehicleData.model,
+        productionYear: vehicleData.productionYear,
+        plateNumber: vehicleData.numberPlate.trim(),
+        color: vehicleData.color,
+        services,
+        imageUrls: {
+          carImage: vehiclePictureUrl,
+          vehicleLicense: vehicleLicenseUrl,
+          registrationCertificate: vehicleRegistrationUrl,
+        },
       };
 
-      // Add services if applicable (stored under vehicle object)
-      if (shouldShowServices() && vehicleData.services && vehicleData.services.length > 0) {
-        vehicleUpdateData['vehicle.services'] = vehicleData.services;
-      }
-      
-      // For minibus/bus, auto-set services to 'ride'
-      if (registrationData.vehicleCategory === 'minibus') {
-        vehicleUpdateData['vehicle.services'] = ['ride'];
-      }
-
-      // Add cargo type if applicable (single select)
-      if (shouldShowCargoTypes() && vehicleData.cargoType) {
-        vehicleUpdateData['vehicle.cargoType'] = vehicleData.cargoType;
+      // Add truck-specific fields if applicable
+      if (vehicleType === 'truck') {
+        if (vehicleData.tonnage) {
+          payload.tonnage = vehicleData.tonnage;
+        }
+        if (vehicleData.cargoType) {
+          payload.cargoType = vehicleData.cargoType;
+        }
+        if (vehicleData.refrigerationType) {
+          payload.refrigerationType = vehicleData.refrigerationType;
+        }
       }
 
-      // Add refrigeration type if applicable (only for enclosed trucks)
-      if (shouldShowRefrigeration() && vehicleData.refrigerationType) {
-        vehicleUpdateData['vehicle.refrigerationType'] = vehicleData.refrigerationType;
+      console.log('[v0] Sending vehicle data to backend:', payload);
+
+      // Send data to backend API - backend will classify vehicle, generate vehicleCategory,
+      // generate pricingCategory, and save final vehicle object to Firestore
+      const response = await fetch('https://aletwend-render-backend.onrender.com/classifyVehicleAndSaveDriver', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Failed to save vehicle information');
       }
 
-      // Add tonnage if applicable
-      if (shouldShowTonnage() && vehicleData.tonnage) {
-        vehicleUpdateData['vehicle.tonnage'] = vehicleData.tonnage;
-      }
-
-      await updateDoc(driverRef, vehicleUpdateData);
-
-      console.log('Vehicle data saved to Firestore');
+      const result = await response.json();
+      console.log('[v0] Backend response:', result);
 
       // Navigate to the location selection page
       router.push('/chooseLocation');
-    } catch (error) {
-      console.error('Error saving vehicle data:', error);
-      Alert.alert('Error', 'Failed to save vehicle information. Please try again.');
+    } catch (error: any) {
+      console.error('[v0] Error saving vehicle data:', error);
+      Alert.alert('Error', error.message || 'Failed to save vehicle information. Please try again.');
     } finally {
       setIsUploading(false);
     }
