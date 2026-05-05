@@ -52,9 +52,8 @@ interface VehicleData {
   vehicleLicense: string;
   vehicleRegistration: string;
   services?: string[];
-  cargoType?: string; // Single select: 'open' or 'enclosed'
-  refrigerationType?: string; // Only for enclosed: 'refrigerated' or 'non_refrigerated'
-  tonnage?: string;
+  cargoType?: string; // Single select: 'open' or 'enclosed' (trucks only)
+  refrigerationType?: string; // Only for enclosed trucks: 'refrigerated' or 'non_refrigerated'
 }
 
 export default function VehicleInformation() {
@@ -78,9 +77,8 @@ export default function VehicleInformation() {
     vehicleLicense: '',
     vehicleRegistration: '',
     services: [],
-    cargoType: '', // Single select
-    refrigerationType: '', // Only for enclosed cargo type
-    tonnage: '',
+    cargoType: '', // Single select (trucks only)
+    refrigerationType: '', // Only for enclosed cargo type (trucks only)
   });
 
   const [isUploading, setIsUploading] = useState(false);
@@ -91,7 +89,6 @@ export default function VehicleInformation() {
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showYearPicker, setShowYearPicker] = useState(false);
   const [showServicesPicker, setShowServicesPicker] = useState(false);
-  const [showTonnagePicker, setShowTonnagePicker] = useState(false);
   const [showCargoTypePicker, setShowCargoTypePicker] = useState(false);
   const [showRefrigerationPicker, setShowRefrigerationPicker] = useState(false);
 
@@ -102,7 +99,6 @@ export default function VehicleInformation() {
   // Service rules loaded from vehicle_service_rules
   const [availableServices, setAvailableServices] = useState<string[]>([]);
   const [availableCargoTypes, setAvailableCargoTypes] = useState<string[]>([]);
-  const [availableTonnageOptions, setAvailableTonnageOptions] = useState<string[]>([]);
 
   const [brandSearch, setBrandSearch] = useState('');
   const [modelSearch, setModelSearch] = useState('');
@@ -338,9 +334,10 @@ export default function VehicleInformation() {
         // Reset service options when no model selected
         setAvailableServices([]);
         setAvailableCargoTypes([]);
-        setAvailableTonnageOptions([]);
         return;
       }
+
+      const category = registrationData.vehicle?.type;
 
       try {
         // Create vehicleId from brand and model (e.g., "toyota_dyna")
@@ -348,74 +345,65 @@ export default function VehicleInformation() {
         const constructedKey = `${selectedBrand.name}_${vehicleData.model}`.toLowerCase().replace(/\s+/g, '_');
         const vehicleId = vehicleDocMap.get(constructedKey) || constructedKey;
 
-        console.log('[v0] Looking up service rules in vehicle_service_rules/', vehicleId);
+        console.log('[Vehicle Rules] Looking up vehicle_service_rules/', vehicleId);
 
-        // NOW query vehicle_service_rules/{vehicleId} for services, cargoTypes, tonnageOptions
+        // Query vehicle_service_rules/{vehicleId} for services
         const serviceRulesRef = doc(firestore, 'vehicle_service_rules', vehicleId);
         const serviceRulesSnap = await getDoc(serviceRulesRef);
 
         if (serviceRulesSnap.exists()) {
           const rules = serviceRulesSnap.data();
-          console.log('[v0] Loaded service rules from Firestore:', rules);
+          console.log('[Vehicle Rules] Raw rules:', rules);
 
-          // Extract services array
-          const services = rules.services || [];
-          setAvailableServices(services);
-          console.log('[v0] Available services:', services);
-
-          // FIXED: For trucks, always use 'open' and 'enclosed' for cargo types
-          const category = registrationData.vehicle?.type;
-          if (category === 'truck') {
-            setAvailableCargoTypes(['open', 'enclosed']);
-            console.log('[v0] Set cargo types to open/enclosed for truck');
+          // Extract services safely - handle any document structure
+          const services = Array.isArray(rules.services) ? rules.services : [];
+          console.log('[Vehicle Rules] Services:', services);
+          
+          // Services are ONLY shown for cars
+          if (category === 'car') {
+            // Use services from rules, or fallback to default
+            setAvailableServices(services.length > 0 ? services : ['ride']);
           } else {
-            // Extract cargoTypes array for other categories
-            const cargoTypes = rules.cargoTypes || [];
-            setAvailableCargoTypes(cargoTypes);
-            console.log('[v0] Available cargo types:', cargoTypes);
+            // Hide services for motorbike, truck, minibus
+            setAvailableServices([]);
           }
 
-          // Handle tonnageOptions - could be array of strings or numbers
-          const tonnage = rules.tonnageOptions || [];
-          const tonnageStrings = tonnage.map((t: number | string) =>
-            typeof t === 'number' ? `${t} ton${t > 1 ? 's' : ''}` : t
-          );
-          setAvailableTonnageOptions(tonnageStrings);
-          console.log('[v0] Available tonnage options:', tonnageStrings);
+          // For trucks, set cargo types
+          if (category === 'truck') {
+            setAvailableCargoTypes(['open', 'enclosed']);
+          } else {
+            setAvailableCargoTypes([]);
+          }
         } else {
-          // Fallback to default options based on category if no rules found
-          console.log('[v0] No service rules found for', vehicleId, 'in vehicle_service_rules, using defaults');
+          // No rules found - use defaults
+          console.log('[Vehicle Rules] No rules found for', vehicleId, '- using defaults');
           setDefaultServiceOptions();
         }
       } catch (error) {
-        console.error('[v0] Error loading service rules:', error);
+        console.error('[Vehicle Rules] Error loading service rules:', error);
         setDefaultServiceOptions();
       }
     };
 
     loadServiceRules();
-  }, [selectedBrand, vehicleData.model, vehicleDocMap]);
+  }, [selectedBrand, vehicleData.model, vehicleDocMap, registrationData.vehicle?.type]);
 
   const setDefaultServiceOptions = () => {
     const category = registrationData.vehicle?.type;
-    if (category === 'car' || category === 'motorbike') {
-      setAvailableServices(['ride', 'delivery', 'courier', 'towing']);
+    
+    // Services are ONLY shown for cars
+    if (category === 'car') {
+      // Safe fallback: at minimum show 'ride' service
+      setAvailableServices(['ride']);
       setAvailableCargoTypes([]);
-      setAvailableTonnageOptions([]);
     } else if (category === 'truck') {
-      setAvailableServices(['delivery', 'courier', 'moving']);
-      // FIXED: Cargo types for trucks must be 'open' or 'enclosed' only
+      // Trucks: NO services field, only cargo type
+      setAvailableServices([]);
       setAvailableCargoTypes(['open', 'enclosed']);
-      setAvailableTonnageOptions(['1 ton', '2 tons', '3 tons', '4 tons', '5 tons', '8 tons', '10 tons']);
-    } else if (category === 'minibus') {
-      // Bus auto-sets services to 'ride' - no selection needed
-      setAvailableServices([]);
-      setAvailableCargoTypes([]);
-      setAvailableTonnageOptions([]);
     } else {
+      // motorbike, minibus: NO services, NO cargo types
       setAvailableServices([]);
       setAvailableCargoTypes([]);
-      setAvailableTonnageOptions([]);
     }
   };
 
@@ -427,7 +415,6 @@ export default function VehicleInformation() {
       services: [], 
       cargoType: '', 
       refrigerationType: '',
-      tonnage: '' 
     }));
     setSelectedBrand(item);
     setBrandSearch('');
@@ -463,23 +450,13 @@ export default function VehicleInformation() {
     });
   };
 
-  const handleTonnageSelect = (tonnage: string) => {
-    setVehicleData((prev) => ({ ...prev, tonnage }));
-    setShowTonnagePicker(false);
-  };
-
-  // Check if services should be shown
+  // Check if services should be shown - ONLY for cars
   const shouldShowServices = (): boolean => {
-    return availableServices.length > 0;
+    return registrationData.vehicle?.type === 'car' && availableServices.length > 0;
   };
 
   // Check if cargo types should be shown - only for trucks
   const shouldShowCargoTypes = (): boolean => {
-    return registrationData.vehicle?.type === 'truck';
-  };
-
-  // Check if tonnage should be shown - only for trucks
-  const shouldShowTonnage = (): boolean => {
     return registrationData.vehicle?.type === 'truck';
   };
 
@@ -546,39 +523,38 @@ export default function VehicleInformation() {
     const category = registrationData.vehicle?.type;
     
     // Common required fields for ALL categories:
-    // - vehicle image, vehicle license, certificate of registration (now required)
-    // - brand, model, productionYear, plateNumber, color (now required)
+    // - vehicle image, vehicle license, certificate of registration
+    // - brand, model, productionYear, plateNumber (valid format), color
     const basicFieldsValid =
       vehicleData.brand &&
       vehicleData.model &&
-      vehicleData.color && // Now required for all
+      vehicleData.color &&
       vehicleData.productionYear &&
       vehicleData.numberPlate &&
       vehicleData.numberPlate.length === 8 &&
       !plateError &&
       vehicleData.vehiclePicture &&
       vehicleData.vehicleLicense &&
-      vehicleData.vehicleRegistration; // Now required for all
+      vehicleData.vehicleRegistration;
 
-    // TRUCK validation: services, tonnage, cargoType, refrigerationType (if enclosed)
-    if (category === 'truck') {
-      const servicesValid = vehicleData.services && vehicleData.services.length > 0;
-      const tonnageValid = !!vehicleData.tonnage;
-      const cargoTypeValid = !!vehicleData.cargoType;
-      // Refrigeration is required ONLY if cargoType is 'enclosed'
-      const refrigerationValid = vehicleData.cargoType !== 'enclosed' || !!vehicleData.refrigerationType;
-      
-      return basicFieldsValid && servicesValid && tonnageValid && cargoTypeValid && refrigerationValid && !isUploading;
-    }
-    
-    // CAR and MOTORBIKE validation: services required
-    if (category === 'car' || category === 'motorbike') {
+    // CAR validation: services required (at least 1)
+    if (category === 'car') {
       const servicesValid = vehicleData.services && vehicleData.services.length > 0;
       return basicFieldsValid && servicesValid && !isUploading;
     }
     
-    // BUS validation: no services, tonnage, cargoType needed (services auto-set to 'ride')
-    if (category === 'minibus') {
+    // TRUCK validation: cargoType required, refrigerationType required if enclosed
+    // NO services required, NO tonnage required
+    if (category === 'truck') {
+      const cargoTypeValid = !!vehicleData.cargoType;
+      // Refrigeration is required ONLY if cargoType is 'enclosed'
+      const refrigerationValid = vehicleData.cargoType !== 'enclosed' || !!vehicleData.refrigerationType;
+      
+      return basicFieldsValid && cargoTypeValid && refrigerationValid && !isUploading;
+    }
+    
+    // MOTORBIKE and MINIBUS validation: no services, no cargoType, no refrigerationType needed
+    if (category === 'motorbike' || category === 'minibus') {
       return basicFieldsValid && !isUploading;
     }
 
@@ -675,10 +651,8 @@ export default function VehicleInformation() {
       };
 
       // Add truck-specific fields if applicable
+      // NOTE: tonnage is NOT sent - it's determined by the backend
       if (vehicleType === 'truck') {
-        if (vehicleData.tonnage) {
-          payload.tonnage = vehicleData.tonnage;
-        }
         if (vehicleData.cargoType) {
           payload.cargoType = vehicleData.cargoType;
         }
@@ -904,21 +878,7 @@ export default function VehicleInformation() {
           </TouchableOpacity>
         )}
 
-        {/* 4. Tonnage field - for trucks only (after service) */}
-        {shouldShowTonnage() && (
-          <TouchableOpacity
-            style={[styles.fieldBox, !vehicleData.model && styles.fieldBoxDisabled]}
-            onPress={() => vehicleData.model && setShowTonnagePicker(true)}
-            disabled={!vehicleData.model}
-          >
-            <Text style={styles.fieldLabel}>Tonnage</Text>
-            <Text style={vehicleData.tonnage ? styles.fieldValue : styles.fieldPlaceholder}>
-              {vehicleData.tonnage || 'Select tonnage'}
-            </Text>
-          </TouchableOpacity>
-        )}
-
-        {/* 5. Cargo Type field - SINGLE SELECT for trucks only */}
+        {/* 4. Cargo Type field - SINGLE SELECT for trucks only */}
         {shouldShowCargoTypes() && (
           <TouchableOpacity
             style={[styles.fieldBox, !vehicleData.model && styles.fieldBoxDisabled]}
@@ -934,7 +894,7 @@ export default function VehicleInformation() {
           </TouchableOpacity>
         )}
 
-        {/* 6. Refrigeration Type - ONLY shown when cargoType is 'enclosed' */}
+        {/* 5. Refrigeration Type - ONLY shown when cargoType is 'enclosed' */}
         {shouldShowRefrigeration() && (
           <TouchableOpacity
             style={styles.fieldBox}
@@ -949,7 +909,7 @@ export default function VehicleInformation() {
           </TouchableOpacity>
         )}
 
-        {/* 7. Production year */}
+        {/* 6. Production year */}
         <TouchableOpacity
           style={[styles.fieldBox, (!vehicleData.brand || !vehicleData.model) && styles.fieldBoxDisabled]}
           onPress={() => vehicleData.brand && vehicleData.model && setShowYearPicker(true)}
@@ -1225,30 +1185,6 @@ export default function VehicleInformation() {
         </View>
       </Modal>
 
-      {/* Tonnage Picker Modal */}
-      <Modal visible={showTonnagePicker} animationType="slide" transparent={false}>
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Select Tonnage</Text>
-            <TouchableOpacity onPress={() => setShowTonnagePicker(false)} style={styles.modalClose}>
-              <X color="#fff" size={28} />
-            </TouchableOpacity>
-          </View>
-          <FlatList
-            data={availableTonnageOptions}
-            keyExtractor={(item) => item}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                style={[styles.listItem, vehicleData.tonnage === item && styles.listItemSelected]}
-                onPress={() => handleTonnageSelect(item)}
-              >
-                <Text style={styles.listItemText}>{item}</Text>
-                {vehicleData.tonnage === item && <Text style={styles.checkMark}>✓</Text>}
-              </TouchableOpacity>
-            )}
-          />
-        </View>
-      </Modal>
     </View>
   );
 }
