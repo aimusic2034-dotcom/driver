@@ -135,18 +135,26 @@ export default function VehicleInformation() {
   };
 
   const handleTakeNewPicture = async () => {
-    if (!cameraPermission) {
-      await requestCameraPermission();
+    // Check if permission is already granted
+    if (cameraPermission?.granted) {
+      setViewMode('camera');
       return;
     }
 
-    if (!cameraPermission.granted) {
-      Alert.alert('Permission Required', 'Camera permission is required to take photos.');
-      await requestCameraPermission();
-      return;
+    // Request permission and wait for result
+    const result = await requestCameraPermission();
+    
+    if (result.granted) {
+      // Permission granted - open camera
+      setViewMode('camera');
+    } else {
+      // Permission denied
+      Alert.alert(
+        'Camera Permission Required',
+        'Please enable camera access in your device settings to take photos.',
+        [{ text: 'OK' }]
+      );
     }
-
-    setViewMode('camera');
   };
 
   const handleChooseFromGallery = async () => {
@@ -627,13 +635,16 @@ export default function VehicleInformation() {
         vehicleRegistrationUrl = await uploadImageToCloudinary(base64, 'driver_images');
       }
 
-      // Prepare services array
-      let services = vehicleData.services || [];
-      if (vehicleType === 'minibus') {
-        services = ['ride']; // Auto-set for minibus
+      // Prepare services - only include if applicable
+      // Trucks and minibuses: backend assigns services, DO NOT send from app
+      // Cars: use selected services
+      // Motorbike: backend assigns services
+      let services: string[] | undefined = undefined;
+      if (vehicleType === 'car' && vehicleData.services && vehicleData.services.length > 0) {
+        services = vehicleData.services;
       }
 
-      // Build payload for backend API
+      // Build payload for backend API - only include filled fields
       const payload: any = {
         uid,
         type: vehicleType, // truck / car / minibus / bicycle / motorbike
@@ -642,7 +653,6 @@ export default function VehicleInformation() {
         productionYear: vehicleData.productionYear,
         plateNumber: vehicleData.numberPlate.trim(),
         color: vehicleData.color,
-        services,
         imageUrls: {
           carImage: vehiclePictureUrl,
           vehicleLicense: vehicleLicenseUrl,
@@ -650,18 +660,20 @@ export default function VehicleInformation() {
         },
       };
 
-      // Add truck-specific fields if applicable
-      // NOTE: tonnage is NOT sent - it's determined by the backend
+      // Only attach services if defined (cars only)
+      if (services !== undefined) {
+        payload.services = services;
+      }
+
+      // Add truck-specific fields (REQUIRED for trucks)
       if (vehicleType === 'truck') {
-        if (vehicleData.cargoType) {
-          payload.cargoType = vehicleData.cargoType;
-        }
-        if (vehicleData.refrigerationType) {
+        payload.cargoType = vehicleData.cargoType;
+        if (vehicleData.cargoType === 'enclosed') {
           payload.refrigerationType = vehicleData.refrigerationType;
         }
       }
 
-      console.log('[v0] Sending vehicle data to backend:', payload);
+      console.log('[Submit] Payload:', payload);
 
       // Send data to backend API - backend will classify vehicle, generate vehicleCategory,
       // generate pricingCategory, and save final vehicle object to Firestore
@@ -673,13 +685,16 @@ export default function VehicleInformation() {
         body: JSON.stringify(payload),
       });
 
+      console.log('[Submit] Response status:', response.status);
+
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
+        console.log('[Submit] Error response:', errorData);
         throw new Error(errorData.message || 'Failed to save vehicle information');
       }
 
       const result = await response.json();
-      console.log('[v0] Backend response:', result);
+      console.log('[Submit] Success response:', result);
 
       // Navigate to the location selection page
       router.push('/chooseLocation');

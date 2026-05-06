@@ -286,7 +286,7 @@ export default function Dashboard() {
     const uid = auth.currentUser?.uid;
     if (!uid) return;
 
-    console.log('[v0] Starting location tracking for driver:', uid);
+    console.log('[Location] Starting location tracking for driver:', uid);
 
     const subscription = await watchLocation(async (coords) => {
       const { latitude, longitude } = coords;
@@ -301,7 +301,7 @@ export default function Dashboard() {
         g: geoObject.g,
       });
 
-      console.log('[v0] Driver location updated to driver_locations:', { lat: latitude, lng: longitude, g: geoObject.g });
+      console.log('[Location] Updated driver_locations:', { lat: latitude, lng: longitude, g: geoObject.g });
 
       // Update ride location if driver has an active ride
       if (activeRide && (rideStatus === 'accepted' || rideStatus === 'arrived' || rideStatus === 'in_progress')) {
@@ -340,19 +340,18 @@ export default function Dashboard() {
 
     const coords = await getLocation();
     if (coords) {
-      const { latitude, longitude, heading } = coords;
+      const { latitude, longitude } = coords;
 
-      // Update driver_locations/{uid} with flat structure
+      // Update driver_locations/{uid} with GeoFire format (consistent with startTracking)
       // NOTE: We no longer write to drivers/{uid} - driver data is in Firestore
+      const geoObject = createGeoFireObject(latitude, longitude);
       await set(ref(database, `driver_locations/${uid}`), {
-        lat: latitude,
-        lng: longitude,
-        heading: heading || 0,
-        speed: 0,
-        updatedAt: Date.now(),
+        l: geoObject.l,
+        g: geoObject.g,
       });
 
-      console.log('[v0] Driver went online, initial location set:', { lat: latitude, lng: longitude });
+      setCurrentLocation({ latitude, longitude });
+      console.log('[Location] Driver went online, initial location set:', { lat: latitude, lng: longitude, g: geoObject.g });
     }
 
     // SET drivers_online/{uid} - REALTIME STATE SYSTEM
